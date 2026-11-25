@@ -161,12 +161,13 @@
     const nTx = isTr ? 12 : isDx ? 10 : 6, slip = isTr ? 6.5 : isDx ? 4.0 : 1.5, friction = +(nTx * txGas + slip).toFixed(2), hrs = isTr ? 2.2 : isDx ? 1.6 : 1.2;
     const gross = +(val.implied_value_usd * POOL_SHARE * (REF_WALLET / Math.max(p.tvl_usd, 5e6))).toFixed(2);
     const net = +(gross - friction).toFixed(2), hr = +(net / hrs).toFixed(1);
-    const verdict = (net >= 35 && hr >= 20) ? 'FARM' : (net > 0 && hr >= 5) ? 'WATCH' : 'SKIP';
+    const verdict = (net >= 25 && hr >= 15) ? 'FARM' : (net > 0 && hr > 0) ? 'WATCH' : 'SKIP';
     const tvl = shortUsd(p.tvl_usd), ev = shortUsd(val.implied_value_usd), age = val.months_live !== null ? `${val.months_live}m no-token` : 'early stage';
     const mom = p.change_7d !== null ? (p.change_7d >= 0 ? `TVL +${p.change_7d.toFixed(1)}% 7d` : `TVL ${p.change_7d.toFixed(1)}% 7d (lower dilution)`) : 'steady 7d TVL';
     const gasLabel = `~$${friction.toFixed(0)} (${nTx} txs ${pri} @ $${txGas.toFixed(2)} + $${slip.toFixed(0)} slip)`;
     const hrStr = `${hr >= 0 ? '+' : ''}$${hr}/hr`;
-    const s4 = `Unit econ ($${REF_WALLET}): $${gross.toFixed(0)} est. share - $${friction.toFixed(0)} cost = $${net.toFixed(0)} (${hrStr}, ${verdict}; ${ev} EV).`;
+    const sizeNote = verdict === 'WATCH' ? '; positive EV — best for $25k+ or passive LP' : '';
+    const s4 = `Unit econ ($${REF_WALLET}): $${gross.toFixed(0)} est. share - $${friction.toFixed(0)} cost = $${net.toFixed(0)} (${hrStr}, ${verdict}${sizeNote}; ${ev} EV).`;
     const steps = isTr ? [
       `Bridge $${REF_WALLET} USDC to ${pri} (~$${(txGas * 2).toFixed(2)} gas) and fund margin on ${p.name}.`,
       `Build weekly maker/taker volume over 4-8 wks (1.5h total; ~$${(txGas * 8 + slip).toFixed(2)} fees+slippage).`,
