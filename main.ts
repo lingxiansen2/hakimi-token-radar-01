@@ -111,6 +111,10 @@ writeFileSync(
 writeFileSync(join(outDir, 'data.js'), `window.__TOKEN_RADAR_SNAPSHOT__ = ${JSON.stringify(snapshot)};\n`);
 
 const dashFiles = copyTree(join(ROOT_DIR, 'dashboard'), join(outDir, 'dashboard'));
+const dashTotalBytes = dashFiles.reduce((s, f) => s + statSync(join(outDir, 'dashboard', f)).size, 0);
+if (dashTotalBytes > 64_000) {
+  process.stderr.write(`token-radar-01: warning dashboard/ total bytes ${dashTotalBytes} > 64000\n`);
+}
 const shotFiles = copyTree(join(ROOT_DIR, 'screenshots'), join(outDir, 'screenshots'));
 
 if (shotFiles.length >= 3 && shotFiles.length <= 4) {

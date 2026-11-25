@@ -5,8 +5,9 @@
   const VERSION_RE = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
   const WRAPPER_RE = /\b(wrapped|staked|staking|restaked|bridged)\b/i;
   const EXCHANGE_RE = /^(Binance|Coinbase|Bybit|Kraken|Bitget|OKX|Bitfinex|Gemini)\b/i;
-  const CHEAP_CHAINS = ['Solana', 'Base', 'Arbitrum', 'Optimism', 'Sui', 'Hyperliquid', 'Hyperliquid L1', 'Polygon', 'Binance', 'Avalanche', 'Aptos', 'Berachain', 'Monad', 'MegaETH', 'Ink', 'Abstract', 'Unichain', 'Sonic', 'Linea', 'Scroll', 'Starknet', 'zkSync Era', 'Mantle'];
-  const REF_WALLET = 2500, POOL_SHARE = 0.05;
+  const CHEAP_CHAINS = ['Solana', 'Base', 'Arbitrum', 'Optimism', 'Sui', 'Hyperliquid', 'Hyperliquid L1', 'Polygon', 'Binance', 'Avalanche', 'Aptos', 'Berachain', 'Monad', 'MegaETH', 'Ink', 'Abstract', 'Unichain', 'Sonic', 'Linea', 'Scroll', 'Starknet', 'zkSync Era', 'Mantle', 'Ronin'];
+  const TIERS = [{ key: 'k1', cap: 1000, lbl: '$1k', hm: 1.0 }, { key: 'k10', cap: 10000, lbl: '$10k', hm: 1.2 }, { key: 'k50', cap: 50000, lbl: '$50k', hm: 1.5 }];
+  const POOL_SHARE = 0.05;
   const SECTOR_LABELS = { trading: 'Trading & Perps', credit_rwa: 'Credit, CDP & RWA', yield_alloc: 'Yield & Curators', infra: 'Infra, AI & Chains', other: 'Other DeFi' };
 
   const classifySectorGroup = (cat) => !cat ? 'other'
@@ -68,10 +69,18 @@
     return { raw: p, hasTok: (p.gecko_id !== null || p.symbol !== null) ? 1 : 0, logTvl: Math.log10(Math.max(1, p.tvl_usd)), logMcap: (p.mcap_usd !== null && p.mcap_usd > 0) ? Math.log10(p.mcap_usd) : null, chgAsinh: Math.asinh(chg / 20), ageMonths: ageY !== null ? Math.max(1, Math.round(ageY * 12)) : null, logAge: ageY !== null ? Math.log10(1 + ageY) : null, logChains: Math.log10(Math.max(1, (p.chains || []).length)), grp: classifySectorGroup(p.category) };
   };
 
-  function fitStage1Odds(train, full) {
+  function fitStage1Odds(train, opts) {
     const [tvlM, tvlS] = meanStd(train.map((r) => r.logTvl)), [chgM, chgS] = meanStd(train.map((r) => r.chgAsinh));
-    const [ageM, ageS] = meanStd(train.filter((r) => r.logAge !== null).map((r) => r.logAge)), [chM, chS] = meanStd(train.map((r) => r.logChains));
-    const Xf = (r) => full ? [1, (r.logTvl - tvlM) / tvlS, (r.chgAsinh - chgM) / chgS, r.logAge !== null ? (r.logAge - ageM) / ageS : 0, (r.logChains - chM) / chS, r.grp === 'trading' ? 1 : 0, r.grp === 'yield_alloc' ? 1 : 0, r.grp === 'credit_rwa' ? 1 : 0] : [1, (r.logTvl - tvlM) / tvlS];
+    const ages = train.filter((r) => r.logAge !== null).map((r) => r.logAge);
+    const [ageM, ageS] = meanStd(ages.length ? ages : [0]), [chM, chS] = meanStd(train.map((r) => r.logChains));
+    const Xf = (r) => {
+      const x = [1, (r.logTvl - tvlM) / tvlS];
+      if (opts.chg) x.push((r.chgAsinh - chgM) / chgS);
+      if (opts.age) x.push(r.logAge !== null ? (r.logAge - ageM) / ageS : 0);
+      if (opts.sec) x.push(r.grp === 'trading' ? 1 : 0, r.grp === 'yield_alloc' ? 1 : 0, r.grp === 'credit_rwa' ? 1 : 0);
+      if (opts.chains) x.push((r.logChains - chM) / chS);
+      return x;
+    };
     const d = Xf(train[0]).length, w = new Array(d).fill(0);
     for (let it = 0; it < 20; it++) {
       const grad = new Array(d).fill(0), H = Array.from({ length: d }, () => new Array(d).fill(0));
@@ -88,8 +97,8 @@
 
   function fitStage2Mcap(train, opts) {
     const n = train.length, [tvlM, tvlS] = meanStd(train.map((r) => r.logTvl)), [chM, chS] = meanStd(train.map((r) => r.logChains));
-    const [chgM, chgS] = meanStd(train.map((r) => r.chgAsinh)), [ageM, ageS] = meanStd(train.filter((r) => r.logAge !== null).map((r) => r.logAge));
-    const yM = train.reduce((s, r) => s + r.logMcap, 0) / n;
+    const [chgM, chgS] = meanStd(train.map((r) => r.chgAsinh)), ages = train.filter((r) => r.logAge !== null).map((r) => r.logAge);
+    const [ageM, ageS] = meanStd(ages.length ? ages : [0]), yM = train.reduce((s, r) => s + r.logMcap, 0) / n;
     let num = 0, den = 0;
     for (const r of train) { num += (r.logTvl - tvlM) * (r.logMcap - yM); den += (r.logTvl - tvlM) ** 2; }
     const slope = num / (den || 1), grpR = new Map(), catR = new Map();
@@ -100,8 +109,8 @@
       (catR.get(c) || catR.set(c, []).get(c)).push(res);
     }
     const grpP = new Map(), catP = new Map();
-    grpR.forEach((a, k) => grpP.set(k, (a.length / (a.length + 10)) * (a.reduce((x, y) => x + y, 0) / a.length)));
-    catR.forEach((a, c) => { const gp = grpP.get(classifySectorGroup(c)) || 0; catP.set(c, gp + (a.length / (a.length + 10)) * (a.reduce((x, y) => x + y, 0) / a.length - gp)); });
+    grpR.forEach((a, k) => grpP.set(k, (a.length / (a.length + 8)) * (a.reduce((x, y) => x + y, 0) / a.length)));
+    catR.forEach((a, c) => { const gp = grpP.get(classifySectorGroup(c)) || 0; catP.set(c, gp + (a.length / (a.length + 8)) * (a.reduce((x, y) => x + y, 0) / a.length - gp)); });
 
     const Xf = (r) => {
       const x = [1, (r.logTvl - tvlM) / tvlS];
@@ -134,7 +143,11 @@
   const rocAuc = (yT, yP) => { const p = yT.map((y, i) => [yP[i], y]).sort((a, b) => a[0] - b[0]); let pos = 0, neg = 0, rs = 0; p.forEach(([_, y], i) => { if (y === 1) { pos++; rs += i + 1; } else neg++; }); return +((rs - (pos * (pos + 1)) / 2) / (pos * neg || 1)).toFixed(3); };
   const brier = (yT, yP) => +(yT.reduce((s, y, i) => s + (y - yP[i]) ** 2, 0) / yT.length).toFixed(3);
   const spearman = (a, b) => { const rk = (v) => { const ix = v.map((x, i) => [x, i]).sort((x, y) => x[0] - y[0]), r = new Array(v.length); ix.forEach((p, i) => { r[p[1]] = i + 1; }); return r; }; const ra = rk(a), rb = rk(b), n = a.length; let d2 = 0; for (let i = 0; i < n; i++) d2 += (ra[i] - rb[i]) ** 2; return n <= 1 ? 0 : +(1 - (6 * d2) / (n * (n * n - 1))).toFixed(3); };
-  const factorMetrics = (yT, yP) => { const n = yT.length, f = yT.map((t, i) => 10 ** Math.abs(t - yP[i])).sort((a, b) => a - b), mae = yT.reduce((s, t, i) => s + Math.abs(t - yP[i]), 0) / n; return { n, med_factor: +f[Math.floor(n / 2)].toFixed(2), gmean_factor: +(10 ** mae).toFixed(2), mae_log10: +mae.toFixed(3), spearman_rho: spearman(yT, yP) }; };
+  const regMetrics = (yT, yP) => {
+    const n = yT.length, yBar = yT.reduce((s, v) => s + v, 0) / n, sst = yT.reduce((s, v) => s + (v - yBar) ** 2, 0), sse = yT.reduce((s, v, i) => s + (v - yP[i]) ** 2, 0);
+    const f = yT.map((t, i) => 10 ** Math.abs(t - yP[i])).sort((a, b) => a - b), mae = yT.reduce((s, t, i) => s + Math.abs(t - yP[i]), 0) / n;
+    return { n, r2: +(1 - sse / (sst || 1)).toFixed(3), med_factor: +f[Math.floor(n / 2)].toFixed(2), mae_log10: +mae.toFixed(3), spearman_rho: spearman(yT, yP) };
+  };
   const quant = (s, q) => { const p = (s.length - 1) * q, l = Math.floor(p), h = Math.ceil(p); return l === h ? s[l] : s[l] + (s[h] - s[l]) * (p - l); };
   const computeLaunchProbability = (row, s1) => s1.predictProb(row);
 
@@ -152,88 +165,111 @@
   }
 
   const shortUsd = (n) => n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${Math.round(n)}`;
+  const fmtS = (n) => `${n >= 0 ? '+' : '-'}$${Math.abs(Math.round(n))}`;
 
   function buildProtocolFarmPlan(p, val) {
     const cat = p.category || 'DeFi', chains = p.chains || [], pri = chains.find((c) => CHEAP_CHAINS.includes(c)) || chains[0] || 'Ethereum';
-    const txGas = pri === 'Ethereum' ? 8.5 : ['Solana', 'Sui', 'Aptos'].includes(pri) ? 0.04 : ['Bitcoin', 'Lightning'].includes(pri) ? 3.0 : 0.22;
+    const txGas = pri === 'Ethereum' ? 8.5 : ['Bitcoin', 'Lightning'].includes(pri) ? 3.0 : ['Provenance', 'Ripple'].includes(pri) ? 1.2 : ['Solana', 'Sui', 'Aptos', 'Tron'].includes(pri) ? 0.04 : 0.20;
     const isTr = ['Derivatives', 'Prediction Market', 'Options Vault', 'OTC Marketplace', 'Interest Rate Derivatives'].includes(cat);
-    const isDx = ['Dexs', 'Liquidity Manager'].includes(cat), isLn = ['Lending', 'CDP', 'CDP Manager', 'Uncollateralized Lending', 'Collateral Management'].includes(cat);
-    const nTx = isTr ? 12 : isDx ? 10 : 6, slip = isTr ? 6.5 : isDx ? 4.0 : 1.5, friction = +(nTx * txGas + slip).toFixed(2), hrs = isTr ? 2.2 : isDx ? 1.6 : 1.2;
-    const gross = +(val.implied_value_usd * POOL_SHARE * (REF_WALLET / Math.max(p.tvl_usd, 5e6))).toFixed(2);
-    const net = +(gross - friction).toFixed(2), hr = +(net / hrs).toFixed(1);
-    const verdict = (net >= 35 && hr >= 20) ? 'FARM' : (net > 0 && hr >= 5) ? 'WATCH' : 'SKIP';
-    const tvl = shortUsd(p.tvl_usd), ev = shortUsd(val.implied_value_usd), age = val.months_live !== null ? `${val.months_live}m no-token` : 'early stage';
-    const mom = p.change_7d !== null ? (p.change_7d >= 0 ? `TVL +${p.change_7d.toFixed(1)}% 7d` : `TVL ${p.change_7d.toFixed(1)}% 7d (lower dilution)`) : 'steady 7d TVL';
-    const gasLabel = `~$${friction.toFixed(0)} (${nTx} txs ${pri} @ $${txGas.toFixed(2)} + $${slip.toFixed(0)} slip)`;
-    const hrStr = `${hr >= 0 ? '+' : ''}$${hr}/hr`;
-    const s4 = `Unit econ ($${REF_WALLET}): $${gross.toFixed(0)} est. share - $${friction.toFixed(0)} cost = $${net.toFixed(0)} (${hrStr}, ${verdict}; ${ev} EV).`;
-    const steps = isTr ? [
-      `Bridge $${REF_WALLET} USDC to ${pri} (~$${(txGas * 2).toFixed(2)} gas) and fund margin on ${p.name}.`,
-      `Build weekly maker/taker volume over 4-8 wks (1.5h total; ~$${(txGas * 8 + slip).toFixed(2)} fees+slippage).`,
-      `Hold resting limit orders or LP margin across weekend snapshots (0.5h/mo review; ${age}).`, s4,
-    ] : isDx ? [
-      `Deploy $${REF_WALLET} correlated LP on ${p.name} (${pri}, ~$${(txGas * 2).toFixed(2)} entry gas); ${mom}.`,
-      `Execute organic spot swaps across 6+ weeks (~$${(txGas * 6 + slip).toFixed(2)} cost; 0.8h active).`,
-      `Rebalance out-of-range LP biweekly (~$${(txGas * 2).toFixed(2)} gas, 0.5h) and compound 45-60d.`, s4,
-    ] : isLn ? [
-      `Supply $${REF_WALLET} collateral on ${p.name} (${pri}, ~$${(txGas * 2).toFixed(2)} gas; TVL ${tvl}).`,
-      `Borrow 35%-50% LTV in a correlated asset when points apply (HF >= 1.60; ~$${(txGas * 2 + slip).toFixed(2)} cost).`,
-      `Hold 30-90d with 10m/wk health checks (1.2h total; ${age}) across snapshot windows.`, s4,
-    ] : [
-      `Deposit $${REF_WALLET} into ${p.name}'s vault on ${pri} (~$${(txGas * 2).toFixed(2)} gas) and hold receipt tokens.`,
-      `Hold 2+ monthly epochs (45-90d; ${mom} across ${chains.length} chain(s)) with ~$${(txGas * 4 + slip).toFixed(2)} claim cost.`,
-      `Check if ${p.name} receipts compose on ${pri} money markets (0.5h review; ${age}).`, s4,
+    const isDx = ['Dexs', 'Liquidity Manager', 'Leveraged Farming'].includes(cat);
+    const isLn = ['Lending', 'CDP', 'CDP Manager', 'Uncollateralized Lending', 'Collateral Management', 'Basis Trading', 'Dual-Token Stablecoin'].includes(cat);
+    const isChn = ['Chain', 'Payments', 'Privacy', 'AI Agents', 'Decentralized AI', 'Crypto Card Issuer'].includes(cat);
+    const nTx = isTr ? 12 : isDx ? 10 : isLn ? 8 : 6, bps = isTr ? 12 : isDx ? 8 : isLn ? 5 : 3, baseHrs = isTr ? 2.0 : isDx ? 1.5 : isLn ? 1.3 : 1.0, borrowRate = isLn ? 0.001 : 0;
+
+    const tiers = {};
+    for (const t of TIERS) {
+      const gas = +(nTx * txGas).toFixed(1), slip = +(t.cap * (bps / 10000)).toFixed(1), borrow = +(t.cap * borrowRate).toFixed(1);
+      const friction = +(gas + slip + borrow).toFixed(1), hrs = +(baseHrs * t.hm).toFixed(1);
+      const gross = +(val.implied_value_usd * POOL_SHARE * (t.cap / Math.max(p.tvl_usd, 5e6))).toFixed(1);
+      const net = +(gross - friction).toFixed(1), hr = +(net / hrs).toFixed(1), apr = +((net / t.cap) * (365 / 60) * 100).toFixed(1);
+      tiers[t.key] = { label: t.lbl, cap: t.cap, gas, slip, borrow, friction, hrs, gross, net, hr, apr, verdict: (net >= 40 && hr >= 18) ? 'FARM' : (net > 0 && hr >= 4) ? 'WATCH' : 'SKIP' };
+    }
+
+    const d = tiers.k10, tvl = shortUsd(p.tvl_usd), ev = shortUsd(val.implied_value_usd);
+    const age = val.months_live !== null ? `${val.months_live}m no-token` : 'early stage';
+    const mom = p.change_7d !== null ? `${p.change_7d >= 0 ? '+' : ''}${p.change_7d.toFixed(1)}% 7d` : 'steady 7d';
+    const lock = isTr ? 'instant margin exit (watch funding)' : isDx ? 'spot LP (rebalance biweekly)' : isLn ? 'instant repay (HF >= 1.60)' : isChn ? 'bridge + native dApp epoch' : '7-14d vault epoch lockup';
+    const cLbl = `${chains.length} chain${chains.length === 1 ? '' : 's'}`;
+    const act = isTr ? `Fund ${pri} margin on ${p.name} (${cat}) and hold resting maker orders across ${mom} TVL`
+      : isDx ? `Deploy correlated LP on ${p.name} (${pri} ${cat}, ${tvl}, ${mom}) and route organic swaps`
+      : isLn ? `Supply collateral on ${p.name} (${pri} ${cat}, ${tvl}) and loop 35-45% LTV correlated assets`
+      : isChn ? `Bridge to ${p.name} (${pri} ${cat}, ${cLbl}, ${age}) and run native DEX/LP swaps`
+      : `Deposit into ${p.name}'s ${cat} vault on ${pri} (${cLbl}, ${age}) and hold receipts`;
+    const minV = tiers.k1.verdict !== 'SKIP' ? '$1k+' : tiers.k10.verdict !== 'SKIP' ? '$10k+' : tiers.k50.verdict !== 'SKIP' ? '$50k only' : 'Watchlist only';
+    const risk = isTr ? 'funding bleed & liquidation; hedge legs.' : isDx ? 'IL risk; use correlated pairs.' : isLn ? 'keep HF >= 1.60 & check borrow APR.' : 'vault queue & points dilution risk.';
+
+    const tRow = (t) => `${t.label} ${fmtS(t.net)} (${t.hr >= 0 ? '+' : ''}$${t.hr}/hr, ${t.apr}% APR)`;
+    const steps = [
+      `Deploy ($1k/$10k/$50k): ${act}; entry gas ~$${(txGas * 2).toFixed(2)} on ${pri} (${ev} EV, ${Math.round(val.launch_odds * 100)}% odds).`,
+      `Cadence & Lockup: Execute ${nTx} txs over 45-60d (${tiers.k1.hrs}-${tiers.k50.hrs}h active); ${lock}.`,
+      `Tier Costs ($1k/$10k/$50k): $${tiers.k1.friction.toFixed(0)} / $${d.friction.toFixed(0)} / $${tiers.k50.friction.toFixed(0)} (${nTx} txs ${pri} gas $${d.gas.toFixed(0)} + ${bps}bps slip${isLn ? ' + borrow' : ''}).`,
+      `Net $/hr & APR: ${tRow(tiers.k1)} | ${tRow(d)} | ${tRow(tiers.k50)}.`,
+      `Skip Rule (${minV}): ${tiers.k1.verdict === 'SKIP' ? 'Skip $1k (gas/TVL drag); ' : ''}abort if 7d TVL drops >15% or dilution >2x; ${risk}`,
     ];
-    const risk = isTr ? 'Funding bleed & liquidation risk; hedge legs.' : isDx ? 'Impermanent loss risk; use correlated pairs.' : isLn ? 'Keep HF >= 1.60 to prevent liquidations.' : 'Vault strategy & withdrawal queue risks.';
-    return { gasLabel, cadence: `${hrs}h active / 45-90d`, risk, steps, grossShareUsd: gross, frictionUsd: friction, effortHours: hrs, netEvUsd: net, hourlyEv: hr, verdict };
+    return { gasLabel: `~$${d.friction.toFixed(0)} (${nTx} txs ${pri} + ${bps}bps)`, cadence: `${d.hrs}h / 60d · ${lock}`, risk, steps, tiers, grossShareUsd: d.gross, frictionUsd: d.friction, effortHours: d.hrs, netEvUsd: d.net, hourlyEv: d.hr, aprPct: d.apr, verdict: d.verdict };
   }
 
   function buildEmpiricalModel(snapshot) {
     const asOfMs = Date.parse(`${snapshot.as_of}T00:00:00Z`), part = partitionProtocols(snapshot);
     const cleanPre = part.candidates.map((p) => prepRow(p, asOfMs));
     const cleanTok = part.tokenized.filter((p) => !EXCLUDED_CATS.has(p.category || '') && !VERSION_RE.test(p.name) && !WRAPPER_RE.test(p.name) && !EXCHANGE_RE.test(p.name)).map((p) => prepRow(p, asOfMs));
-    const s1U = cleanTok.concat(cleanPre);
+    const s1U = cleanTok.concat(cleanPre).sort((a, b) => a.logTvl - b.logTvl || a.raw.slug.localeCompare(b.raw.slug));
 
-    const d1 = s1U.filter((r) => r.raw.listed_at).sort((a, b) => a.raw.listed_at.localeCompare(b.raw.listed_at) || a.raw.slug.localeCompare(b.raw.slug));
-    const ud1 = s1U.filter((r) => !r.raw.listed_at);
-    const s1Validation = [false, true].map((full) => {
-      const yCV = [], pCV = [], yWF = [], pWF = [];
-      for (let f = 0; f < 10; f++) { const fit = fitStage1Odds(s1U.filter((_, i) => i % 10 !== f), full); s1U.filter((_, i) => i % 10 === f).forEach((r) => { yCV.push(r.hasTok); pCV.push(fit.predictProb(r)); }); }
-      for (let k = Math.floor(d1.length * 0.5); k < d1.length; k += 10) { const fit = fitStage1Odds(ud1.concat(d1.slice(0, k)), full); d1.slice(k, k + 10).forEach((r) => { yWF.push(r.hasTok); pWF.push(fit.predictProb(r)); }); }
-      return { label: full ? 'TVL + 7d Growth + Age + Sector + Chains' : 'log10(TVL) baseline', cv_auc: rocAuc(yCV, pCV), cv_brier: brier(yCV, pCV), wf_auc: rocAuc(yWF, pWF), wf_brier: brier(yWF, pWF) };
+    const d1 = s1U.filter((r) => r.raw.listed_at).sort((a, b) => a.raw.listed_at.localeCompare(b.raw.listed_at) || a.raw.slug.localeCompare(b.raw.slug)), ud1 = s1U.filter((r) => !r.raw.listed_at);
+    const f1_0 = s1U.filter((_, i) => i % 2 === 0), f1_1 = s1U.filter((_, i) => i % 2 === 1);
+    const s1Specs = [
+      { id: 's1_tvl', label: 'S1 P(Token): log10(TVL) base', opts: {} },
+      { id: 's1_chg', label: 'S1 + 7d Growth asinh(chg/20)', opts: { chg: true } },
+      { id: 's1_age', label: 'S1 + Age log10(1 + age_yrs)', opts: { chg: true, age: true } },
+      { id: 's1_sec', label: 'S1 + Sector Group Dummies', opts: { chg: true, age: true, sec: true } },
+      { id: 's1_chn', label: 'S1 + Chain Breadth log10(chains)', opts: { chg: true, age: true, sec: true, chains: true } },
+    ];
+    let prevAuc = 0;
+    const s1Validation = s1Specs.map((sp, idx) => {
+      const m0 = fitStage1Odds(f1_1, sp.opts), m1 = fitStage1Odds(f1_0, sp.opts);
+      const yB = f1_0.map((r) => r.hasTok).concat(f1_1.map((r) => r.hasTok)), pB = f1_0.map(m0.predictProb).concat(f1_1.map(m1.predictProb));
+      const yWF = [], pWF = [];
+      for (let k = Math.floor(d1.length * 0.5); k < d1.length; k += 10) { const fit = fitStage1Odds(ud1.concat(d1.slice(0, k)), sp.opts); d1.slice(k, k + 10).forEach((r) => { yWF.push(r.hasTok); pWF.push(fit.predictProb(r)); }); }
+      const cvAuc = rocAuc(yB, pB), dAuc = idx === 0 ? 0 : +(cvAuc - prevAuc).toFixed(3), status = idx === 0 ? 'baseline' : dAuc > 0.002 ? 'kept' : 'dropped';
+      if (status !== 'dropped') prevAuc = cvAuc;
+      return { id: sp.id, label: sp.label, status, delta_auc: dAuc, cv_auc: cvAuc, cv_brier: brier(yB, pB), wf_auc: rocAuc(yWF, pWF), wf_brier: brier(yWF, pWF) };
     });
 
-    const tokRef = cleanTok.filter((r) => r.logMcap !== null);
-    const d2 = tokRef.filter((r) => r.raw.listed_at).sort((a, b) => a.raw.listed_at.localeCompare(b.raw.listed_at) || a.raw.slug.localeCompare(b.raw.slug));
-    const ud2 = tokRef.filter((r) => !r.raw.listed_at);
-    const specs = [
-      { id: 'tvl_only', label: 'log10(TVL) baseline', status: 'baseline', opts: { sector: false, chains: false, chg: false, age: false, lambda: 4 } },
-      { id: 'tvl_sector_chains', label: '+ EB Sector Multiple + Chain Breadth', status: 'kept', opts: { sector: true, chains: true, chg: false, age: false, lambda: 10 } },
-      { id: 'plus_chg', label: '+ 7d TVL Velocity asinh(chg/20)', status: 'dropped', opts: { sector: true, chains: true, chg: true, age: false, lambda: 10 } },
-      { id: 'plus_age', label: '+ Track Record log10(1 + age_yrs)', status: 'dropped', opts: { sector: true, chains: true, chg: false, age: true, lambda: 10 } },
+    const tokRef = cleanTok.filter((r) => r.logMcap !== null).sort((a, b) => a.logTvl - b.logTvl || a.raw.slug.localeCompare(b.raw.slug));
+    const d2 = tokRef.filter((r) => r.raw.listed_at).sort((a, b) => a.raw.listed_at.localeCompare(b.raw.listed_at) || a.raw.slug.localeCompare(b.raw.slug)), ud2 = tokRef.filter((r) => !r.raw.listed_at);
+    const f2_0 = tokRef.filter((_, i) => i % 2 === 0), f2_1 = tokRef.filter((_, i) => i % 2 === 1);
+    const s2Specs = [
+      { id: 'tvl_only', label: 'log10(TVL) baseline', opts: { sector: false, chains: false, chg: false, age: false, lambda: 2 } },
+      { id: 'tvl_sector', label: '+ EB Sector Multiple', opts: { sector: true, chains: false, chg: false, age: false, lambda: 4 } },
+      { id: 'tvl_sector_chains', label: '+ Chain Footprint', opts: { sector: true, chains: true, chg: false, age: false, lambda: 6 } },
+      { id: 'plus_chg', label: '+ 7d TVL Velocity', opts: { sector: true, chains: true, chg: true, age: false, lambda: 6 } },
+      { id: 'plus_age', label: '+ Track Record Age', opts: { sector: true, chains: true, chg: false, age: true, lambda: 6 } },
     ];
-    let looRes = [];
-    const s2Ablation = specs.map((sp) => {
-      const yL = [], pL = [], resL = [], yW = [], pW = [];
+    let looRes = [], bestR2 = -9, bestMae = 9;
+    const s2Ablation = s2Specs.map((sp, idx) => {
+      const m0 = fitStage2Mcap(f2_1, sp.opts), m1 = fitStage2Mcap(f2_0, sp.opts);
+      const yB = f2_0.map((r) => r.logMcap).concat(f2_1.map((r) => r.logMcap)), pB = f2_0.map((r) => m0.predictRow(r).logMcapPred).concat(f2_1.map((r) => m1.predictRow(r).logMcapPred));
+      const cv2 = regMetrics(yB, pB), yL = [], pL = [], resL = [], yW = [], pW = [];
       for (let i = 0; i < tokRef.length; i++) { const pred = fitStage2Mcap(tokRef.filter((_, j) => j !== i), sp.opts).predictRow(tokRef[i]).logMcapPred; yL.push(tokRef[i].logMcap); pL.push(pred); resL.push(tokRef[i].logMcap - pred); }
       if (sp.id === 'tvl_sector_chains') looRes = resL;
       for (let k = 25; k < d2.length; k++) { yW.push(d2[k].logMcap); pW.push(fitStage2Mcap(ud2.concat(d2.slice(0, k)), sp.opts).predictRow(d2[k]).logMcapPred); }
-      return { id: sp.id, label: sp.label, status: sp.status, loo: factorMetrics(yL, pL), walk_forward: factorMetrics(yW, pW) };
+      const dR2 = idx === 0 ? 0 : +(cv2.r2 - bestR2).toFixed(3), dMae = idx === 0 ? 0 : +(cv2.mae_log10 - bestMae).toFixed(3), status = idx === 0 ? 'baseline' : (dR2 > 0 && dMae < 0) ? 'kept' : 'dropped';
+      if (status !== 'dropped') { bestR2 = cv2.r2; bestMae = cv2.mae_log10; }
+      return { id: sp.id, label: sp.label, status, delta_r2: dR2, delta_mae: dMae, cv2, loo: regMetrics(yL, pL), walk_forward: regMetrics(yW, pW) };
     });
 
     looRes.sort((a, b) => a - b);
     const quantiles = { p10: quant(looRes, 0.1), p25: quant(looRes, 0.25), p75: quant(looRes, 0.75), p90: quant(looRes, 0.9) };
-    const stage1Fit = fitStage1Odds(s1U, true), stage2Fit = fitStage2Mcap(tokRef, specs[1].opts);
-    const buckets = new Map();
+    const stage1Fit = fitStage1Odds(s1U, s1Specs[3].opts), stage2Fit = fitStage2Mcap(tokRef, s2Specs[2].opts), buckets = new Map();
     tokRef.forEach((r) => (buckets.get(r.grp) || buckets.set(r.grp, []).get(r.grp)).push(r.raw.mcap_usd / r.raw.tvl_usd));
     const sectorMultiples = ['trading', 'credit_rwa', 'infra', 'yield_alloc', 'other'].map((k) => { const v = (buckets.get(k) || [0.25]).slice().sort((a, b) => a - b); return { group: k, label: SECTOR_LABELS[k], count: v.length, median_mcap_tvl: +v[Math.floor(v.length / 2)].toFixed(2) }; });
 
     return {
       part, cleanPre, tokRef, stage1Fit, stage2Fit, quantiles,
       summary: {
-        stage1_universe_size: s1U.length, stage2_ref_size: tokRef.length, ref_wallet_usd: REF_WALLET, illustrative_pool_share: POOL_SHARE,
+        stage1_universe_size: s1U.length, stage2_ref_size: tokRef.length, tiers: TIERS.map((t) => t.lbl), illustrative_pool_share: POOL_SHARE,
         stage1_validation: s1Validation, stage2_ablation: s2Ablation, sector_multiples: sectorMultiples,
-        range_honesty: `Wide P10-P90 bands reflect peer dispersion across ${tokRef.length} tokens (LOO x${s2Ablation[1].loo.med_factor}, Walk-Fwd x${s2Ablation[1].walk_forward.med_factor}); snapshot tracks TVL+Sector+Chains, not tokenomics.`,
+        range_honesty: `2-Fold OOS R² ${s2Ablation[2].cv2.r2.toFixed(3)} (MAE ${s2Ablation[2].cv2.mae_log10.toFixed(3)}) · LOO x${s2Ablation[2].loo.med_factor.toFixed(2)} · WF x${s2Ablation[2].walk_forward.med_factor.toFixed(2)} across ${tokRef.length} DeFi peers.`,
       },
     };
   }
@@ -255,8 +291,8 @@
         launch_odds: val.launch_odds, cond_mcap_usd: val.cond_mcap_usd, implied_value_usd: val.implied_value_usd,
         band_p10_usd: val.band_p10_usd, band_p25_usd: val.band_p25_usd, band_p75_usd: val.band_p75_usd, band_p90_usd: val.band_p90_usd,
         factors: val.factors, comparables, est_gas_cost: farm.gasLabel, time_commitment: farm.cadence, risk_note: farm.risk,
-        gross_share_usd: farm.grossShareUsd, friction_usd: farm.frictionUsd, effort_hours: farm.effortHours,
-        net_ev_usd: farm.netEvUsd, hourly_ev: farm.hourlyEv, verdict: farm.verdict, farm_steps: farm.steps,
+        tiers: farm.tiers, gross_share_usd: farm.grossShareUsd, friction_usd: farm.frictionUsd, effort_hours: farm.effortHours,
+        net_ev_usd: farm.netEvUsd, hourly_ev: farm.hourlyEv, apr_pct: farm.aprPct, verdict: farm.verdict, farm_steps: farm.steps,
       };
     });
 

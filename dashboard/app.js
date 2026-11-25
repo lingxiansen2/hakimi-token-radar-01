@@ -1,257 +1,238 @@
 (() => {
-  const RAW_SNAPSHOT = window.__TOKEN_RADAR_SNAPSHOT__;
-  const ENGINE = window.TokenRadarEngine;
-  const root = document.getElementById('app');
-  if (!RAW_SNAPSHOT || !ENGINE || !root) {
-    if (root) root.textContent = 'Missing offline snapshot (../data.js) or TokenRadarEngine (model.js).';
-    return;
-  }
+  const RAW = window.__TOKEN_RADAR_SNAPSHOT__, ENG = window.TokenRadarEngine, root = document.getElementById('app');
+  if (!RAW || !ENG || !root) { if (root) root.textContent = 'Missing offline snapshot or TokenRadarEngine.'; return; }
 
-  // Execute the identical empirical 2-stage model & pre-token filter live in the browser
-  const DATA = ENGINE.runBoardPipeline(RAW_SNAPSHOT);
-  const SECTOR_COLORS = { trading: '#38bdf8', credit_rwa: '#10b981', yield_alloc: '#a78bfa', infra: '#f59e0b', other: '#94a3b8' };
-  const params = new URLSearchParams(window.location.search);
-  const state = {
-    view: params.get('view') || 'board',
-    search: params.get('q') || '',
-    tier: params.get('tier') || 'all',
-    verdict: params.get('verdict') || 'all',
-    sector: params.get('sector') || 'all',
-    chain: params.get('chain') || 'all',
-    momentum: params.get('momentum') || 'all',
-    sortKey: params.get('sort') || 'rank',
-    sortDir: params.get('dir') || 'asc',
-    selectedSlug: params.get('slug') || '',
+  // Execute identical empirical 2-stage model & pre-token partition live in the browser
+  const DATA = ENG.runBoardPipeline(RAW);
+  const SCOL = { trading: '#38bdf8', credit_rwa: '#10b981', yield_alloc: '#a78bfa', infra: '#f59e0b', other: '#94a3b8' };
+  const P = new URLSearchParams(window.location.search);
+  const st = {
+    view: P.get('view') || 'board',
+    capTier: ['k1', 'k10', 'k50'].includes(P.get('cap')) ? P.get('cap') : 'k10',
+    search: P.get('q') || '', tier: P.get('tier') || 'all', verdict: P.get('verdict') || 'all',
+    sector: P.get('sector') || 'all', chain: P.get('chain') || 'all', momentum: P.get('momentum') || 'all',
+    sortKey: P.get('sort') || 'rank', sortDir: P.get('dir') || 'asc', selectedSlug: P.get('slug') || '',
   };
 
   const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const fmtUsd = (n) => n == null ? '—' : n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${Math.round(n)}`;
-  const fmtPct = (v) => v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
+  const usd = (n) => n == null ? '—' : n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}K` : `$${Math.round(n)}`;
+  const pct = (v) => v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`;
   const vCls = (v) => v === 'FARM' ? 'emerald' : v === 'WATCH' ? 'amber' : 'rose';
-  const mb = (lbl, val, cls = '') => `<div class="mini-box"><div class="lbl">${lbl}</div><div class="val num ${cls}">${val}</div></div>`;
+  const sCls = (s) => s === 'kept' ? 'emerald' : s === 'baseline' ? 'cyan' : 'rose';
+  const pill = (c, t) => `<span class="pill ${c}">${t}</span>`;
+  const mb = (l, v) => `<div class="mini-box"><div class="lbl">${l}</div><div class="val num">${v}</div></div>`;
+  const td = (v, c = '') => `<td class="${c}">${v}</td>`;
+  const rTd = (v, c = '') => `<td class="right num ${c}">${v}</td>`;
+  const tOf = (r) => r.tiers[st.capTier] || r.tiers.k10;
+  const tLbl = () => st.capTier === 'k1' ? '$1k' : st.capTier === 'k50' ? '$50k' : '$10k';
+  const sgn = (v, d = 3) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`;
+  const dCls = (v) => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 
-  function getFilteredRows() {
-    const q = state.search.trim().toLowerCase();
+  function getFiltered() {
+    const q = st.search.trim().toLowerCase();
     const list = DATA.rows.filter((r) => {
-      if (state.tier === 'watchlist' && !r.on_watchlist) return false;
-      if (state.tier === 'early' && r.on_watchlist) return false;
-      if (state.verdict !== 'all' && r.verdict !== state.verdict) return false;
-      if (state.sector !== 'all' && r.sector_group !== state.sector) return false;
-      if (state.chain !== 'all' && !r.chains.includes(state.chain)) return false;
-      if (state.momentum === 'positive' && !(r.change_7d !== null && r.change_7d > 0)) return false;
-      if (q && !`${r.name} ${r.slug} ${r.category} ${r.chains.join(' ')}`.toLowerCase().includes(q)) return false;
-      return true;
+      if (st.tier === 'watchlist' && !r.on_watchlist) return false;
+      if (st.tier === 'early' && r.on_watchlist) return false;
+      if (st.verdict !== 'all' && tOf(r).verdict !== st.verdict) return false;
+      if (st.sector !== 'all' && r.sector_group !== st.sector) return false;
+      if (st.chain !== 'all' && !r.chains.includes(st.chain)) return false;
+      if (st.momentum === 'positive' && !(r.change_7d !== null && r.change_7d > 0)) return false;
+      return !q || `${r.name} ${r.slug} ${r.category} ${r.chains.join(' ')}`.toLowerCase().includes(q);
     });
-    const dir = state.sortDir === 'asc' ? 1 : -1;
+    const dir = st.sortDir === 'asc' ? 1 : -1;
     list.sort((a, b) => {
-      let va = a[state.sortKey], vb = b[state.sortKey];
-      if (state.sortKey === 'change_7d' || state.sortKey === 'months_live') { va = va ?? -9999; vb = vb ?? -9999; }
+      let va = st.sortKey === 'hourly_ev' ? tOf(a).hr : a[st.sortKey], vb = st.sortKey === 'hourly_ev' ? tOf(b).hr : b[st.sortKey];
+      if (st.sortKey === 'change_7d' || st.sortKey === 'months_live') { va = va ?? -9999; vb = vb ?? -9999; }
       return (typeof va === 'string' ? va.localeCompare(vb) : (va ?? 0) - (vb ?? 0)) * dir || a.rank - b.rank;
     });
     return list;
   }
 
-  function renderScatterSvg(rows) {
-    const W = 680, H = 162, pad = { l: 50, r: 16, t: 10, b: 22 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
-    const minX = 6.6, maxX = 9.6, minY = 5.9, maxY = 7.7;
-    const sx = (v) => pad.l + ((Math.max(minX, Math.min(maxX, Math.log10(Math.max(1, v)))) - minX) / (maxX - minX)) * iw;
-    const sy = (v) => pad.t + ih - ((Math.max(minY, Math.min(maxY, Math.log10(Math.max(1, v)))) - minY) / (maxY - minY)) * ih;
-    const gridX = [7, 8, 9].map((e) => ({ x: pad.l + ((e - minX) / (maxX - minX)) * iw, lbl: e === 7 ? '$10M' : e === 8 ? '$100M' : '$1B' }));
-    const gridY = [6.3, 7.0, 7.5].map((e) => ({ y: pad.t + ih - ((e - minY) / (maxY - minY)) * ih, lbl: e < 6.5 ? '$2M' : e === 7 ? '$10M' : '$32M' }));
-
+  function renderScatter(rows) {
+    const W = 580, H = 138, pad = { l: 44, r: 16, t: 10, b: 18 }, iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const sx = (v) => pad.l + ((Math.max(6.6, Math.min(9.6, Math.log10(Math.max(1, v)))) - 6.6) / 3.0) * iw;
+    const sy = (v) => pad.t + ih - ((Math.max(5.9, Math.min(7.85, Math.log10(Math.max(1, v)))) - 5.9) / 1.95) * ih;
+    const gx = [7, 8, 9].map((e) => ({ x: pad.l + ((e - 6.6) / 3.0) * iw, l: e === 7 ? '$10M' : e === 8 ? '$100M' : '$1B' }));
+    const gy = [6.3, 7.0, 7.6].map((e) => ({ y: pad.t + ih - ((e - 5.9) / 1.95) * ih, l: e < 6.5 ? '$2M' : e === 7 ? '$10M' : '$40M' }));
     const dots = rows.map((r) => {
-      const sel = r.slug === state.selectedSlug;
-      return `<circle class="scatter-dot" data-slug="${esc(r.slug)}" cx="${sx(r.tvl_usd).toFixed(1)}" cy="${sy(r.implied_value_usd).toFixed(1)}" r="${sel ? 5.8 : r.on_watchlist ? 4.0 : 2.8}" fill="${SECTOR_COLORS[r.sector_group] || '#94a3b8'}" fill-opacity="${sel ? 1 : r.on_watchlist ? 0.92 : 0.65}" stroke="${sel ? '#fff' : r.on_watchlist ? '#0b0f14' : 'none'}" stroke-width="${sel ? 2 : 1}" style="cursor:pointer"></circle>`;
+      const sel = r.slug === st.selectedSlug;
+      return `<circle class="scatter-dot" data-slug="${esc(r.slug)}" cx="${sx(r.tvl_usd).toFixed(1)}" cy="${sy(r.implied_value_usd).toFixed(1)}" r="${sel ? 5.5 : r.on_watchlist ? 3.8 : 2.6}" fill="${SCOL[r.sector_group] || '#94a3b8'}" fill-opacity="${sel ? 1 : r.on_watchlist ? 0.92 : 0.65}" stroke="${sel ? '#fff' : r.on_watchlist ? '#080c12' : 'none'}" stroke-width="${sel ? 1.8 : 0.9}" style="cursor:pointer"/>`;
     }).join('');
-
-    const placed = [];
-    const labels = rows.slice(0, 9).map((r) => {
-      const px = sx(r.tvl_usd), py = sy(r.implied_value_usd), txt = r.name.length > 16 ? r.name.slice(0, 15) + '…' : r.name;
-      const w = txt.length * 6.0 + 8, h = 12;
-      for (const [cx, cy] of [[px + 7, py - 5], [px - 7 - w, py - 5], [px + 7, py + 11], [px - 7 - w, py + 11]]) {
-        const x0 = Math.max(pad.l + 2, Math.min(W - pad.r - w - 2, cx)), y0 = Math.max(pad.t + 9, Math.min(H - pad.b - 3, cy));
-        const box = { x1: x0 - 3, y1: y0 - h, x2: x0 + w + 3, y2: y0 + 3 };
+    const placed = rows.slice(0, 12).map((r) => { const x = sx(r.tvl_usd), y = sy(r.implied_value_usd); return { x1: x - 5, y1: y - 5, x2: x + 5, y2: y + 5 }; });
+    const labels = rows.slice(0, 8).map((r) => {
+      const px = sx(r.tvl_usd), py = sy(r.implied_value_usd), txt = r.name.length > 26 ? r.name.slice(0, 24) + '…' : r.name, w = txt.length * 5.2 + 8;
+      for (const [cx, cy] of [[px + 8, py - 4], [px - 8 - w, py - 4], [px + 8, py + 12], [px - 8 - w, py + 12], [px + 8, py - 14], [px - 8 - w, py + 20]]) {
+        const x0 = Math.max(pad.l + 2, Math.min(W - pad.r - w - 2, cx)), y0 = Math.max(pad.t + 10, Math.min(H - pad.b - 3, cy));
+        const box = { x1: x0 - 2, y1: y0 - 10, x2: x0 + w + 2, y2: y0 + 3 };
         if (!placed.some((b) => !(box.x2 < b.x1 || box.x1 > b.x2 || box.y2 < b.y1 || box.y1 > b.y2))) {
           placed.push(box);
-          return `<text x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" fill="#dbe6f5" font-size="9.5" font-weight="600">${esc(txt)}</text>`;
+          return `<text x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" fill="#dce7f5" font-size="8.8" font-weight="600">${esc(txt)}</text>`;
         }
       }
       return '';
     }).join('');
-
-    return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="TVL vs Expected Value">${gridX.map((g) => `<line x1="${g.x}" y1="${pad.t}" x2="${g.x}" y2="${H - pad.b}" stroke="#1f2a3c" stroke-dasharray="3 3"/><text x="${g.x}" y="${H - 6}" fill="#687a94" font-size="9.5" text-anchor="middle">${g.lbl} TVL</text>`).join('')}${gridY.map((g) => `<line x1="${pad.l}" y1="${g.y}" x2="${W - pad.r}" y2="${g.y}" stroke="#1f2a3c" stroke-dasharray="3 3"/><text x="${pad.l - 5}" y="${g.y + 3}" fill="#687a94" font-size="9.5" text-anchor="end">${g.lbl}</text>`).join('')}${dots}${labels}</svg>`;
+    return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="TVL vs EV">${gx.map((g) => `<line x1="${g.x}" y1="${pad.t}" x2="${g.x}" y2="${H - pad.b}" stroke="#1c2738" stroke-dasharray="3 3"/><text x="${g.x}" y="${H - 5}" fill="#6b7d97" font-size="9" text-anchor="middle">${g.l} TVL</text>`).join('')}${gy.map((g) => `<line x1="${pad.l}" y1="${g.y}" x2="${W - pad.r}" y2="${g.y}" stroke="#1c2738" stroke-dasharray="3 3"/><text x="${pad.l - 4}" y="${g.y + 3}" fill="#6b7d97" font-size="9" text-anchor="end">${g.l}</text>`).join('')}${dots}${labels}</svg>`;
   }
 
-  function renderSectorBars() {
-    const sectors = DATA.model.sector_multiples, maxM = Math.max(...sectors.map((s) => s.median_mcap_tvl), 0.5);
-    const bars = sectors.map((s) => `<div style="margin-bottom:5px"><div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px"><span><span style="display:inline-block;width:7px;height:7px;border-radius:2px;background:${SECTOR_COLORS[s.group]};margin-right:5px"></span>${esc(s.label)} <span style="color:var(--muted)">(${s.count})</span></span><span class="num" style="font-weight:700">${s.median_mcap_tvl.toFixed(2)}x MCap/TVL</span></div><div style="height:5px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--border)"><div style="width:${Math.max(8, Math.round((s.median_mcap_tvl / maxM) * 100))}%;height:100%;background:${SECTOR_COLORS[s.group]}"></div></div></div>`).join('');
-    const s1 = DATA.model.stage1_validation[1], kept = DATA.model.stage2_ablation[1];
-    return `${bars}<div style="margin-top:6px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-size:10.5px;color:var(--text-2)"><b style="color:var(--emerald)">Two Blind Tests:</b> LOO x<b class="num">${kept.loo.med_factor}</b> (rho ${kept.loo.spearman_rho}) · Walk-Forward x<b class="num">${kept.walk_forward.med_factor}</b> · Stage 1 AUC <b class="num">${s1.cv_auc}</b></div>`;
+  function renderBoardAblation() {
+    const s2 = DATA.model.stage2_ablation, s1k = DATA.model.stage1_validation[3], s1d = DATA.model.stage1_validation[4];
+    const rows = s2.map((s) => `<tr>${td(`<b>${esc(s.label)}</b>`)}${td(pill(sCls(s.status), s.status.toUpperCase()))}${rTd(s.cv2.r2.toFixed(3))}${rTd(s.status === 'baseline' ? '—' : sgn(s.delta_r2), dCls(s.delta_r2))}${rTd(s.cv2.mae_log10.toFixed(3))}${rTd('x' + s.loo.med_factor.toFixed(2))}</tr>`).join('');
+    const secs = DATA.model.sector_multiples.slice(0, 4).map((s) => `<span><b style="color:${SCOL[s.group]}">■</b> ${esc(s.label.split(' ')[0])}: <b class="num">${s.median_mcap_tvl.toFixed(2)}x</b></span>`).join('');
+    return `<table class="radar-table"><thead><tr><th>Stage 2 Term</th><th>Status</th><th class="right">2F R²</th><th class="right">ΔR²</th><th class="right">OOS MAE</th><th class="right">LOO</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="ab-note"><span><b class="pos">S1 P(Token):</b> Kept TVL+7dΔ+Age+Sec (<b>AUC ${s1k.cv_auc}</b>)</span><span class="neg">Dropped Chains (${s1d.delta_auc})</span></div>
+      <div class="sector-strip">${secs}</div>`;
   }
 
-  function renderAblationTable(compact = false) {
-    return `<table class="radar-table"><thead><tr><th>Stage 2 Model Term</th><th>Status</th><th class="right">LOO Err</th><th class="right">LOO Rho</th><th class="right">Walk-Fwd Err</th><th class="right">WF Rho</th></tr></thead>
-    <tbody>${DATA.model.stage2_ablation.map((s) => `<tr><td><b>${esc(s.label)}</b></td><td><span class="pill ${s.status === 'kept' ? 'emerald' : s.status === 'baseline' ? 'cyan' : 'rose'}">${s.status.toUpperCase()}</span></td><td class="right num">x${s.loo.med_factor.toFixed(2)}</td><td class="right num">${s.loo.spearman_rho.toFixed(3)}</td><td class="right num">x${s.walk_forward.med_factor.toFixed(2)}</td><td class="right num">${s.walk_forward.spearman_rho.toFixed(3)}</td></tr>`).join('')}</tbody></table>
-    <div style="margin-top:5px;font-size:10.5px;color:var(--muted)">${compact ? esc(DATA.model.range_honesty) : ''}</div>`;
+  function renderFullAblation() {
+    const s1 = DATA.model.stage1_validation, s2 = DATA.model.stage2_ablation;
+    return `<table class="radar-table"><thead><tr><th>Stage 1 P(Token) Term</th><th>Decision</th><th class="right">2F AUC</th><th class="right">ΔAUC</th><th class="right">Brier</th><th class="right">WF AUC</th></tr></thead>
+      <tbody>${s1.map((x) => `<tr>${td(`<b>${esc(x.label)}</b>`)}${td(pill(sCls(x.status), x.status.toUpperCase()))}${rTd(x.cv_auc.toFixed(3))}${rTd(x.status === 'baseline' ? '—' : sgn(x.delta_auc), dCls(x.delta_auc))}${rTd(x.cv_brier.toFixed(3))}${rTd(x.wf_auc.toFixed(3))}</tr>`).join('')}</tbody></table>
+      <div style="height:6px"></div>
+      <table class="radar-table"><thead><tr><th>Stage 2 E[MCap] Term</th><th>Decision</th><th class="right">2F R²</th><th class="right">ΔR²</th><th class="right">MAE</th><th class="right">LOO</th><th class="right">WF</th></tr></thead>
+      <tbody>${s2.map((x) => `<tr>${td(`<b>${esc(x.label)}</b>`)}${td(pill(sCls(x.status), x.status.toUpperCase()))}${rTd(x.cv2.r2.toFixed(3))}${rTd(x.status === 'baseline' ? '—' : sgn(x.delta_r2), dCls(x.delta_r2))}${rTd(x.cv2.mae_log10.toFixed(3))}${rTd('x' + x.loo.med_factor.toFixed(2))}${rTd('x' + x.walk_forward.med_factor.toFixed(2))}</tr>`).join('')}</tbody></table>`;
   }
 
-  function renderInspector(row, fullMode = false) {
+  function renderTierCards(row) {
+    return `<div class="tier-grid">${['k1', 'k10', 'k50'].map((k) => {
+      const t = row.tiers[k];
+      return `<div class="tier-card ${st.capTier === k ? 'active-tier' : ''}"><div class="tier-head"><span>${t.label} Tier</span>${pill(vCls(t.verdict), t.verdict)}</div>
+        <div class="tier-line"><span>Cost (${t.hrs}h)</span><span class="num neg">-$${t.friction.toFixed(0)}</span></div>
+        <div class="tier-line"><span>Net EV</span><span class="num ${t.net >= 0 ? 'pos' : 'neg'}">${t.net >= 0 ? '+' : '-'}$${Math.abs(Math.round(t.net))}</span></div>
+        <div class="tier-line"><span>$/hr · APR</span><span class="num ${t.hr >= 18 ? 'pos' : ''}">${t.hr >= 0 ? '+' : ''}$${t.hr}/h · ${t.apr}%</span></div></div>`;
+    }).join('')}</div>`;
+  }
+
+  function renderInspector(row, full = false) {
     if (!row) return '<div class="inspector">No protocol matches active filters.</div>';
     const lo = Math.log10(Math.max(5e4, row.band_p10_usd)), hi = Math.log10(Math.max(5e5, row.band_p90_usd)), span = Math.max(0.2, hi - lo);
-    const pct = (v) => Math.max(0, Math.min(100, ((Math.log10(Math.max(5e4, v)) - lo) / span) * 100));
-    const p25 = pct(row.band_p25_usd), p75 = pct(row.band_p75_usd), p50 = pct(row.implied_value_usd), f = row.factors;
+    const bp = (v) => Math.max(0, Math.min(100, ((Math.log10(Math.max(5e4, v)) - lo) / span) * 100));
+    const p25 = bp(row.band_p25_usd), p75 = bp(row.band_p75_usd), p50 = bp(row.implied_value_usd), f = row.factors, t = tOf(row);
 
-    const leftBlock = `<div>
+    const fRow = (lbl, val, cls = '') => `<div class="factor-row"><span>${lbl}</span><span class="num ${cls}">${val}</span></div>`;
+    const left = `<div>
       <div class="detail-header"><div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="pill cyan num">#${row.rank}</span><h2 class="detail-title">${esc(row.name)}</h2><span class="pill ${vCls(row.verdict)}">${row.verdict} ${row.hourly_ev >= 0 ? '+' : ''}$${row.hourly_ev}/hr</span></div>
-        <div class="proto-meta" style="margin-top:3px;color:var(--text-2)">${esc(row.category)} · ${row.chains.slice(0, 4).map(esc).join(', ')}${row.chains.length > 4 ? ` +${row.chains.length - 4}` : ''} · Records no token</div>
-      </div>${!fullMode ? '<button class="chip" id="openFullDetailBtn">Full Playbook</button>' : ''}</div>
-      <div class="detail-metrics">
-        ${mb('Expected Value (EV)', fmtUsd(row.implied_value_usd), '')}
-        ${mb('E[MCap] × Token Odds', `${fmtUsd(row.cond_mcap_usd)} <span class="pos" style="font-size:10.5px">× ${Math.round(row.launch_odds * 100)}%</span>`)}
-        ${mb('TVL / 7d / Age', `${fmtUsd(row.tvl_usd)} · <span class="${row.change_7d > 0 ? 'pos' : row.change_7d < 0 ? 'neg' : ''}">${fmtPct(row.change_7d)}</span> · ${row.months_live ? row.months_live + 'm' : 'n/a'}`)}
-      </div>
-      <div class="section-label">Empirical Valuation Band (P10–P90 LOO Residual Quantiles)</div>
+        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">${pill('cyan num', '#' + row.rank)}<h2 class="detail-title">${esc(row.name)}</h2>${pill(vCls(t.verdict), `${t.label}: ${t.verdict} ${t.hr >= 0 ? '+' : ''}$${t.hr}/hr`)}</div>
+        <div class="proto-meta" style="margin-top:2px;color:var(--text-2)">${esc(row.category)} · ${row.chains.slice(0, 4).map(esc).join(', ')}${row.chains.length > 4 ? ` +${row.chains.length - 4}` : ''} · Records no token</div>
+      </div>${!full ? '<button class="chip" id="openFullDetailBtn">Full Playbook</button>' : ''}</div>
+      <div class="detail-metrics">${mb('Expected Value (EV)', usd(row.implied_value_usd))}${mb('E[MCap] × Odds', `${usd(row.cond_mcap_usd)} <span class="pos">× ${Math.round(row.launch_odds * 100)}%</span>`)}${mb('TVL / 7d / Age', `${usd(row.tvl_usd)} · <span class="${dCls(row.change_7d)}">${pct(row.change_7d)}</span> · ${row.months_live ? row.months_live + 'm' : 'n/a'}`)}</div>
+      <div class="section-label">Empirical Valuation Band (P10–P90 LOO Residuals)</div>
       <div class="band-bar">
-        <div class="band-labels num"><span>P10: ${fmtUsd(row.band_p10_usd)}</span><span>P25: ${fmtUsd(row.band_p25_usd)}</span><span style="color:var(--emerald);font-weight:700">EV: ${fmtUsd(row.implied_value_usd)}</span><span>P75: ${fmtUsd(row.band_p75_usd)}</span><span>P90: ${fmtUsd(row.band_p90_usd)}</span></div>
+        <div class="band-labels num"><span>P10: ${usd(row.band_p10_usd)}</span><span>P25: ${usd(row.band_p25_usd)}</span><span class="pos"><b>EV: ${usd(row.implied_value_usd)}</b></span><span>P75: ${usd(row.band_p75_usd)}</span><span>P90: ${usd(row.band_p90_usd)}</span></div>
         <div class="band-track"><div class="band-outer" style="left:0;width:100%"></div><div class="band-inner" style="left:${p25.toFixed(1)}%;width:${Math.max(4, p75 - p25).toFixed(1)}%"></div><div class="band-median" style="left:${p50.toFixed(1)}%"></div></div>
       </div>
-      <div class="section-label">Factor Decomposition (Zero Unfitted Constants)</div>
-      <div class="factor-list">
-        <div class="factor-row"><span>1. Reference Pool MCap Anchor</span><span class="num">${fmtUsd(f.base_mcap_anchor_usd)}</span></div>
-        <div class="factor-row"><span>2. TVL Scale Elasticity (${fmtUsd(row.tvl_usd)})</span><span class="num ${f.tvl_scale_mult >= 1 ? 'pos' : 'neg'}">${f.tvl_scale_mult.toFixed(2)}x</span></div>
-        <div class="factor-row"><span>3. EB Sector Multiple (${esc(row.category)})</span><span class="num ${f.sector_mult >= 1 ? 'pos' : 'neg'}">${f.sector_mult.toFixed(2)}x</span></div>
-        <div class="factor-row"><span>4. Chain Footprint (${row.chains.length} chain${row.chains.length === 1 ? '' : 's'})</span><span class="num">${f.chain_footprint_mult.toFixed(2)}x</span></div>
-        <div class="factor-row"><span>5. Stage-1 Token Odds (TVL + 7d Δ + ${row.months_live ? row.months_live + 'm' : 'n/a'} Age)</span><span class="num pos">${Math.round(f.launch_odds_mult * 100)}%</span></div>
+      <div class="section-label">Fitted Factor Decomposition (Zero Unfitted Constants)</div>
+      <div class="${full ? 'factor-list' : 'factor-grid-2'}">
+        ${fRow(full ? '1. Reference Pool MCap Anchor' : '1. Pool Anchor', usd(f.base_mcap_anchor_usd))}
+        ${fRow(full ? `2. TVL Scale Elasticity (${usd(row.tvl_usd)})` : '2. TVL Scale', f.tvl_scale_mult.toFixed(2) + 'x', f.tvl_scale_mult >= 1 ? 'pos' : 'neg')}
+        ${fRow(full ? `3. EB Sector Multiple (${esc(row.category)})` : '3. Sector Mult', f.sector_mult.toFixed(2) + 'x', f.sector_mult >= 1 ? 'pos' : 'neg')}
+        ${fRow(full ? `4. Chain Footprint (${row.chains.length} chain${row.chains.length === 1 ? '' : 's'})` : `4. Chains (${row.chains.length})`, f.chain_footprint_mult.toFixed(2) + 'x')}
+        ${full ? fRow(`5. Stage-1 Odds (TVL + 7dΔ + ${row.months_live ? row.months_live + 'm' : 'n/a'} Age + Sec)`, Math.round(f.launch_odds_mult * 100) + '%', 'pos') : ''}
       </div>
-      ${fullMode ? `<div class="section-label" style="margin-top:10px">Two-Blind-Test Ablation Proof (LOO &amp; Walk-Forward)</div>${renderAblationTable(true)}` : `<div style="margin-top:7px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;display:flex;justify-content:space-between;align-items:center;font-size:11px"><span><b>$${DATA.model.ref_wallet_usd.toLocaleString()} Wallet:</b> Cost $${row.friction_usd.toFixed(0)} · ${row.effort_hours}h</span><span class="pill ${vCls(row.verdict)}">${row.verdict} · Net $${row.net_ev_usd.toFixed(0)} (${row.hourly_ev >= 0 ? '+' : ''}$${row.hourly_ev}/hr)</span></div>`}
+      ${full ? `<div class="section-label" style="margin-top:6px">Strict 2-Fold Blind Held-Out Ablation (Kept vs Dropped)</div>${renderFullAblation()}` : `<div class="section-label">Multi-Tier Costed Farm Plan ($1k / $10k / $50k)</div>${renderTierCards(row)}<div class="step-preview"><b class="cy">Action:</b> ${esc(row.farm_steps[0])}<br><b class="am">Skip:</b> ${esc(row.farm_steps[4])}</div>`}
     </div>`;
 
-    const rightBlock = `<div>
-      <div class="section-label" style="margin-top:${fullMode ? '0' : '8px'}">Costed Farm Unit Economics ($${DATA.model.ref_wallet_usd.toLocaleString()} Ref. Wallet · 5% Illustrative Pool)</div>
-      <div class="econ-grid">
-        ${mb('Est. Share', `$${row.gross_share_usd.toFixed(0)}`)}
-        ${mb('Gas + Slip', `-$${row.friction_usd.toFixed(1)}`, 'neg')}
-        ${mb('Net EV / Time', `$${row.net_ev_usd.toFixed(0)} / ${row.effort_hours}h`, row.net_ev_usd >= 0 ? 'pos' : 'neg')}
-        ${mb('Hourly Verdict', `${row.hourly_ev >= 0 ? '+' : ''}$${row.hourly_ev}/hr`, row.hourly_ev >= 20 ? 'pos' : row.hourly_ev >= 5 ? '' : 'neg')}
-      </div>
-      <div class="section-label">Actionable Costed Farming Steps</div>
-      <ol class="step-list">${row.farm_steps.map((st) => `<li>${esc(st)}</li>`).join('')}</ol>
-      <div style="margin-top:5px;font-size:10.5px;color:var(--amber)">Risk check: ${esc(row.risk_note)} · ${esc(row.est_gas_cost)}</div>
+    const right = `<div>
+      <div class="section-label" style="margin-top:0">Costed Multi-Tier Unit Economics ($1k / $10k / $50k · 5% Pool)</div>${renderTierCards(row)}
+      <div class="section-label">5-Step Costed Actionable Playbook</div><ol class="step-list">${row.farm_steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
       <div class="section-label">Nearest Tokenized Peers (Snapshot Ground Truth)</div>
       <table class="peers-table"><thead><tr><th>Peer</th><th>Sector</th><th class="right">TVL</th><th class="right">MCap</th><th class="right">Mult</th></tr></thead>
-      <tbody>${row.comparables.map((c) => `<tr><td><b>${esc(c.name)}</b> <span style="color:var(--muted)">${esc(c.symbol || '')}</span></td><td style="color:var(--text-2)">${esc(c.category)}</td><td class="right num">${fmtUsd(c.tvl_usd)}</td><td class="right num">${fmtUsd(c.mcap_usd)}</td><td class="right num">${c.mcap_tvl_ratio.toFixed(2)}x</td></tr>`).join('')}</tbody></table>
+      <tbody>${row.comparables.map((c) => `<tr>${td(`<b>${esc(c.name)}</b> <span class="mu">${esc(c.symbol || '')}</span>`)}${td(esc(c.category))}${rTd(usd(c.tvl_usd))}${rTd(usd(c.mcap_usd))}${rTd(c.mcap_tvl_ratio.toFixed(2) + 'x')}</tr>`).join('')}</tbody></table>
     </div>`;
 
-    return fullMode ? `<div class="detail-full-grid"><div class="panel">${leftBlock}</div><div class="panel">${rightBlock}</div></div>` : `<aside class="inspector">${leftBlock}${fullMode ? rightBlock : ''}</aside>`;
+    return full ? `<div class="detail-full-grid"><div class="panel">${left}</div><div class="panel">${right}</div></div>` : `<aside class="inspector">${left}</aside>`;
   }
 
-  function renderModelAuditView() {
-    const m = DATA.model, a = DATA.filter_audit;
-    return `<div class="audit-grid"><div class="panel">
-      <div class="panel-head"><h3 class="panel-title">Stage 1: Token Odds Logistic Regression (${m.stage1_universe_size} Protocols)</h3><span class="panel-sub">10-Fold CV &amp; Walk-Forward</span></div>
-      <table class="radar-table"><thead><tr><th>Features</th><th class="right">CV AUC</th><th class="right">CV Brier</th><th class="right">WF AUC</th><th class="right">WF Brier</th></tr></thead>
-      <tbody>${m.stage1_validation.map((s) => `<tr><td><b>${esc(s.label)}</b></td><td class="right num">${s.cv_auc}</td><td class="right num">${s.cv_brier}</td><td class="right num">${s.wf_auc}</td><td class="right num">${s.wf_brier}</td></tr>`).join('')}</tbody></table>
-      <div class="panel-head" style="margin-top:10px"><h3 class="panel-title">Stage 2: E[mcap_usd] Huber-Ridge (${m.stage2_ref_size} DeFi Peers)</h3><span class="panel-sub">Leave-One-Out &amp; Walk-Forward</span></div>
-      ${renderAblationTable(true)}
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h3 class="panel-title">Audited Pre-Token Universe Funnel</h3><span class="panel-sub">Zero wrappers or live-token derivatives</span></div>
-      <div class="funnel-row"><span>Total DefiLlama snapshot protocols</span><b class="num">${a.total_protocols}</b></div>
-      <div class="funnel-row"><span>Excluded: live token recorded (gecko_id / symbol)</span><span class="num neg">-${a.excluded_live_token}</span></div>
-      <div class="funnel-row"><span>Excluded: CEX / Bridge / Liquid Staking / Wrapper</span><span class="num neg">-${a.excluded_category}</span></div>
-      <div class="funnel-row"><span>Excluded: versioned deployment (V2, V3, 2.0)</span><span class="num neg">-${a.excluded_versioned}</span></div>
-      <div class="funnel-row"><span>Excluded: wrapper word or parent brand sibling</span><span class="num neg">-${a.excluded_wrapper_word + a.excluded_cex_prefix + a.excluded_parent_brand}</span></div>
-      <div class="funnel-row" style="background:var(--emerald-dim);border-radius:6px;border:0;margin-top:5px"><b>Retained Clean Radar (${a.retained_watchlist} Watchlist + ${a.retained_early_discovery} Early)</b><b class="num pos">${a.retained_total}</b></div>
+  function renderAudit() {
+    const m = DATA.model, a = DATA.filter_audit, fn = (l, v, c = '') => `<div class="funnel-row"><span>${l}</span><span class="num ${c}">${v}</span></div>`;
+    return `<div class="audit-grid"><div class="panel"><div class="panel-head"><h3 class="panel-title">Strict 2-Fold Blind Held-Out Ablation (${m.stage1_universe_size} Census / ${m.stage2_ref_size} Peers)</h3><span class="panel-sub">Zero Leakage · Kept vs Dropped</span></div>${renderFullAblation()}</div>
+    <div class="panel"><div class="panel-head"><h3 class="panel-title">Audited Pre-Token Universe Funnel</h3><span class="panel-sub">Zero wrappers or live-token derivatives</span></div>
+      ${fn('Total DefiLlama snapshot protocols', `<b>${a.total_protocols}</b>`)}${fn('Excluded: live token recorded (gecko_id / symbol)', '-' + a.excluded_live_token, 'neg')}
+      ${fn('Excluded: CEX / Bridge / Liquid Staking / Wrapper', '-' + a.excluded_category, 'neg')}${fn('Excluded: versioned deployment (V2, V3, 2.0)', '-' + a.excluded_versioned, 'neg')}
+      ${fn('Excluded: wrapper word or parent brand sibling', '-' + (a.excluded_wrapper_word + a.excluded_cex_prefix + a.excluded_parent_brand), 'neg')}
+      <div class="funnel-row" style="background:var(--emerald-dim);border-radius:6px;border:0;margin-top:4px"><b>Retained Clean Radar (${a.retained_watchlist} Watchlist + ${a.retained_early_discovery} Early)</b><b class="num pos">${a.retained_total}</b></div>
     </div></div>
-    <div class="panel">
-      <div class="panel-head"><h3 class="panel-title">Separated Live-Token Reference Universe</h3><span class="panel-sub">Excluded from pre-token board; used to calibrate odds &amp; multiples</span></div>
+    <div class="panel"><div class="panel-head"><h3 class="panel-title">Separated Live-Token Reference Universe</h3><span class="panel-sub">Excluded from pre-token board; calibrates odds &amp; sector multiples</span></div>
       <table class="radar-table"><thead><tr><th>Protocol</th><th>Ticker</th><th>Category</th><th class="right">TVL</th><th class="right">Observed MCap</th><th class="right">MCap / TVL</th></tr></thead>
-      <tbody>${DATA.tokenized_peers_sample.slice(0, 8).map((p) => `<tr><td><b>${esc(p.name)}</b></td><td><span class="pill">${esc(p.symbol || 'TOKEN')}</span></td><td>${esc(p.category)}</td><td class="right num">${fmtUsd(p.tvl_usd)}</td><td class="right num">${fmtUsd(p.mcap_usd)}</td><td class="right num">${p.multiple.toFixed(2)}x</td></tr>`).join('')}</tbody></table>
+      <tbody>${DATA.tokenized_peers_sample.slice(0, 8).map((p) => `<tr>${td(`<b>${esc(p.name)}</b>`)}${td(pill('', esc(p.symbol || 'TOKEN')))}${td(esc(p.category))}${rTd(usd(p.tvl_usd))}${rTd(usd(p.mcap_usd))}${rTd(p.multiple.toFixed(2) + 'x')}</tr>`).join('')}</tbody></table>
     </div>`;
   }
 
   function render() {
-    const filtered = getFilteredRows();
-    if (!filtered.some((r) => r.slug === state.selectedSlug) && filtered[0]) state.selectedSlug = filtered[0].slug;
-    const selected = DATA.rows.find((r) => r.slug === state.selectedSlug) || filtered[0] || DATA.rows[0];
-    const s1 = DATA.model.stage1_validation[1], kept = DATA.model.stage2_ablation[1], vc = DATA.meta.verdict_counts;
-    const filteredTvl = filtered.reduce((s, r) => s + r.tvl_usd, 0), filteredEv = filtered.reduce((s, r) => s + r.implied_value_usd, 0);
+    const flt = getFiltered();
+    if (!flt.some((r) => r.slug === st.selectedSlug) && flt[0]) st.selectedSlug = flt[0].slug;
+    const sel = DATA.rows.find((r) => r.slug === st.selectedSlug) || flt[0] || DATA.rows[0];
+    const s1 = DATA.model.stage1_validation[3], s2k = DATA.model.stage2_ablation[2], a = DATA.filter_audit;
+    const vc = DATA.rows.reduce((acc, r) => { acc[tOf(r).verdict]++; return acc; }, { FARM: 0, WATCH: 0, SKIP: 0 });
+    const fTvl = flt.reduce((s, r) => s + r.tvl_usd, 0), fEv = flt.reduce((s, r) => s + r.implied_value_usd, 0);
+    const vb = (l, v, c) => `<div class="v-badge"><span>${l}</span><span class="${c} num">${v}</span></div>`;
+    const kc = (l, v, s, c = '') => `<div class="kpi-card"><div class="kpi-label">${l}</div><div class="kpi-val ${c}">${v}</div><div class="kpi-sub">${s}</div></div>`;
 
     const topBar = `<header class="topbar">
-      <div class="brand"><div class="brand-mark">TR</div><div><h1>TOKEN RADAR <span style="color:var(--cyan)">// PRE-TOKEN ALPHA</span></h1><div class="brand-sub">Snapshot ${esc(DATA.meta.as_of)} · ${DATA.meta.total_tracked_targets} Pre-Token Targets · Pure E[MCap] × P(Token)</div></div></div>
-      <div class="meta-pill-row"><span class="pill emerald">Stage 1 Odds: CV AUC ${s1.cv_auc} · WF Brier ${s1.wf_brier}</span><span class="pill cyan">Stage 2 Val: LOO x${kept.loo.med_factor} · WF x${kept.walk_forward.med_factor}</span></div>
-      <nav class="nav-tabs" aria-label="Views"><button class="tab-btn ${state.view === 'board' ? 'active' : ''}" data-tab="board">Radar Board</button><button class="tab-btn ${state.view === 'detail' ? 'active' : ''}" data-tab="detail">Protocol Playbook</button><button class="tab-btn ${state.view === 'model' ? 'active' : ''}" data-tab="model">Model &amp; Audit</button></nav>
+      <div class="brand"><div class="brand-mark">TR</div><div><h1>TOKEN RADAR <span class="cy">// PRE-TOKEN ALPHA</span></h1><div class="brand-sub">Snapshot ${esc(DATA.meta.as_of)} · ${DATA.meta.total_tracked_targets} Pre-Token Targets · E[MCap] × P(Token)</div></div></div>
+      <div class="meta-pill-row">${pill('emerald', 'S1 Blind AUC ' + s1.cv_auc)}${pill('cyan', `S2 2-Fold R² +${s2k.cv2.r2} · LOO x${s2k.loo.med_factor.toFixed(2)}`)}</div>
+      <nav class="nav-tabs" aria-label="Views">${[['board', 'Radar Board'], ['detail', 'Protocol Playbook'], ['model', 'Model & Audit']].map(([k, l]) => `<button class="tab-btn ${st.view === k ? 'active' : ''}" data-tab="${k}">${l}</button>`).join('')}</nav>
     </header>
-    <div class="integrity-strip">
-      <span><b class="pos">Integrity:</b> ${DATA.filter_audit.total_protocols} Census · ${DATA.filter_audit.excluded_live_token} Tokenized Separated · ${DATA.filter_audit.excluded_category + DATA.filter_audit.excluded_versioned + DATA.filter_audit.excluded_wrapper_word + DATA.filter_audit.excluded_parent_brand} Wrappers Purged · ${DATA.meta.watchlist_count}/${DATA.meta.watchlist_count} Watchlist Covered</span>
-      <span><b style="color:var(--cyan)">0 Unfitted Constants</b> · Shared Live Engine (<code>model.js</code>) · $${DATA.model.ref_wallet_usd.toLocaleString()} Ref. Wallet: <b class="pos">${vc.FARM} FARM</b> / <b style="color:var(--amber)">${vc.WATCH} WATCH</b> / ${vc.SKIP} SKIP</span>
-    </div>`;
+    <div class="verify-strip">${vb('Watchlist', `${DATA.meta.watchlist_count}/${DATA.meta.watchlist_count} WL · ${a.retained_total} Targets`, 'ok')}${vb('Separation', `${a.excluded_live_token} Comps + ${a.total_protocols - a.retained_total - a.excluded_live_token} Wrappers`, 'cy')}${vb('Blind 2-Fold', `AUC ${s1.cv_auc} · R² +${s2k.cv2.r2} · LOO x${s2k.loo.med_factor.toFixed(2)}`, 'ok')}${vb('Farm Plans', `${a.retained_total}/${a.retained_total} Tiers · Live JS`, 'cy')}</div>`;
 
-    let bodyHtml = '';
-    if (state.view === 'model') bodyHtml = renderModelAuditView();
-    else if (state.view === 'detail') {
-      bodyHtml = `<div class="filter-bar" style="justify-content:space-between"><div style="display:flex;align-items:center;gap:8px"><span style="color:var(--text-2);font-weight:600">Inspect Protocol:</span><select id="detailSelect" class="select-input">${DATA.rows.map((r) => `<option value="${esc(r.slug)}" ${r.slug === selected.slug ? 'selected' : ''}>#${r.rank} ${esc(r.name)} (${fmtUsd(r.implied_value_usd)} · ${r.verdict} ${r.hourly_ev >= 0 ? '+' : ''}$${r.hourly_ev}/hr)</option>`).join('')}</select></div><button class="chip" data-tab="board">Back to Radar Board</button></div>${renderInspector(selected, true)}`;
+    let body = '';
+    if (st.view === 'model') body = renderAudit();
+    else if (st.view === 'detail') {
+      body = `<div class="filter-bar" style="justify-content:space-between"><div style="display:flex;align-items:center;gap:8px"><span style="color:var(--text-2);font-weight:600">Inspect Protocol:</span><select id="detailSelect" class="select-input">${DATA.rows.map((r) => `<option value="${esc(r.slug)}" ${r.slug === sel.slug ? 'selected' : ''}>#${r.rank} ${esc(r.name)} (${usd(r.implied_value_usd)} · ${tOf(r).label} ${tOf(r).verdict} ${tOf(r).hr >= 0 ? '+' : ''}$${tOf(r).hr}/hr)</option>`).join('')}</select></div><button class="chip" data-tab="board">Back to Radar Board</button></div>${renderInspector(sel, true)}`;
     } else {
-      const sa = (k) => (state.sortKey === k ? (state.sortDir === 'asc' ? ' ▲' : ' ▼') : '');
-      const bestHourly = [...filtered].sort((a, b) => b.hourly_ev - a.hourly_ev)[0];
-      bodyHtml = `<section class="kpi-grid">
-        <div class="kpi-card"><div class="kpi-label">Active Targets</div><div class="kpi-val num">${filtered.length} <span style="font-size:11.5px;color:var(--muted)">/ ${DATA.meta.total_tracked_targets}</span></div><div class="kpi-sub">${filtered.filter((r) => r.on_watchlist).length} Watchlist · ${filtered.filter((r) => !r.on_watchlist).length} Early</div></div>
-        <div class="kpi-card"><div class="kpi-label">Filtered TVL</div><div class="kpi-val num">${fmtUsd(filteredTvl)}</div><div class="kpi-sub">Total ${fmtUsd(DATA.meta.total_pretoken_tvl_usd)}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Expected Launch Value</div><div class="kpi-val num" style="color:var(--cyan)">${fmtUsd(filteredEv)}</div><div class="kpi-sub">EV = E[MCap] × P(Token)</div></div>
-        <div class="kpi-card"><div class="kpi-label">Top EV Protocol</div><div class="kpi-val" style="font-size:14px">${esc(filtered[0] ? filtered[0].name : '—')}</div><div class="kpi-sub num">${filtered[0] ? fmtUsd(filtered[0].implied_value_usd) + ' (' + Math.round(filtered[0].launch_odds * 100) + '% odds)' : ''}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Best $/hr ($2.5k Wallet)</div><div class="kpi-val num pos" style="font-size:14px">${esc(bestHourly ? bestHourly.name : '—')}</div><div class="kpi-sub num">${bestHourly ? (bestHourly.hourly_ev >= 0 ? '+' : '') + '$' + bestHourly.hourly_ev + '/hr (' + bestHourly.verdict + ')' : ''}</div></div>
+      const sa = (k) => (st.sortKey === k ? (st.sortDir === 'asc' ? ' ▲' : ' ▼') : '');
+      const topEv = [...flt].sort((a, b) => b.implied_value_usd - a.implied_value_usd)[0];
+      const bestHr = [...flt].sort((a, b) => tOf(b).hr - tOf(a).hr)[0];
+      body = `<section class="kpi-grid">
+        ${kc('Active Targets', `${flt.length} <span class="mu" style="font-size:11px">/ ${DATA.meta.total_tracked_targets}</span>`, `${flt.filter((r) => r.on_watchlist).length} Watchlist · ${flt.filter((r) => !r.on_watchlist).length} Early`, 'num')}
+        ${kc('Filtered TVL', usd(fTvl), `Total ${usd(DATA.meta.total_pretoken_tvl_usd)}`, 'num')}
+        ${kc('Expected Launch Value', usd(fEv), 'EV = E[MCap] × P(Token)', 'num cy')}
+        ${kc('Top EV Protocol', esc(topEv ? topEv.name : '—'), topEv ? `${usd(topEv.implied_value_usd)} (${Math.round(topEv.launch_odds * 100)}% odds)` : '')}
+        ${kc(`Best $/hr (${tLbl()} Tier)`, esc(bestHr ? bestHr.name : '—'), bestHr ? `${tOf(bestHr).hr >= 0 ? '+' : ''}$${tOf(bestHr).hr}/hr (${tOf(bestHr).apr}% APR)` : '', 'pos')}
       </section>
       <section class="charts-row">
-        <div class="panel"><div class="panel-head"><h3 class="panel-title">Log-Scale TVL vs. Expected Launch Value (E[MCap] × P(Token))</h3><span class="panel-sub">Click any node · Large dots = Watchlist ($50M+)</span></div>${renderScatterSvg(filtered)}</div>
-        <div class="panel"><div class="panel-head"><h3 class="panel-title">Sector Multiples &amp; Held-Out Proof</h3><span class="panel-sub">Fit on ${DATA.model.stage2_ref_size} DeFi peers</span></div>${renderSectorBars()}</div>
+        <div class="panel"><div class="panel-head"><h3 class="panel-title">Log-Scale TVL vs. Expected Launch Value</h3><span class="panel-sub">Click dot · Large = Watchlist ($50M+)</span></div>${renderScatter(flt)}</div>
+        <div class="panel"><div class="panel-head"><h3 class="panel-title">Term Selection &amp; Blind Held-Out Ablation (Kept vs Dropped)</h3><span class="panel-sub">Zero-leakage 2-fold CV</span></div>${renderBoardAblation()}</div>
       </section>
       <section class="filter-bar">
-        <input id="searchInput" class="search-input" type="search" placeholder="Search protocol, category, chain..." value="${esc(state.search)}">
-        <div class="chip-group">
-          <button class="chip ${state.verdict === 'all' ? 'active' : ''}" data-verdict="all">All (${DATA.rows.length})</button>
-          <button class="chip ${state.verdict === 'FARM' ? 'active' : ''}" data-verdict="FARM">FARM (${vc.FARM})</button>
-          <button class="chip ${state.verdict === 'WATCH' ? 'active' : ''}" data-verdict="WATCH">WATCH (${vc.WATCH})</button>
-          <button class="chip ${state.verdict === 'SKIP' ? 'active' : ''}" data-verdict="SKIP">SKIP (${vc.SKIP})</button>
-        </div>
-        <div class="chip-group">
-          <button class="chip ${state.tier === 'watchlist' ? 'active' : ''}" data-tier="watchlist">Watchlist (${DATA.meta.watchlist_count})</button>
-          <button class="chip ${state.tier === 'early' ? 'active' : ''}" data-tier="early">Early (${DATA.meta.early_discovery_count})</button>
-        </div>
-        <select id="sectorSelect" class="select-input"><option value="all" ${state.sector === 'all' ? 'selected' : ''}>All Sectors</option><option value="trading" ${state.sector === 'trading' ? 'selected' : ''}>Trading &amp; Perps</option><option value="credit_rwa" ${state.sector === 'credit_rwa' ? 'selected' : ''}>Credit, CDP &amp; RWA</option><option value="yield_alloc" ${state.sector === 'yield_alloc' ? 'selected' : ''}>Yield &amp; Curators</option><option value="infra" ${state.sector === 'infra' ? 'selected' : ''}>Infra, AI &amp; Chains</option></select>
-        <select id="chainSelect" class="select-input"><option value="all" ${state.chain === 'all' ? 'selected' : ''}>All Chains</option>${DATA.meta.top_chains.map((c) => `<option value="${esc(c.chain)}" ${state.chain === c.chain ? 'selected' : ''}>${esc(c.chain)} (${c.count})</option>`).join('')}</select>
-        <button class="chip ${state.momentum === 'positive' ? 'active' : ''}" id="momToggle">7d &gt; 0%</button><button class="reset-btn" id="resetFilters">Reset</button>
+        <input id="searchInput" class="search-input" type="search" placeholder="Search protocol, sector, chain..." value="${esc(st.search)}">
+        <div class="chip-group">${['k1', 'k10', 'k50'].map((k) => `<button class="chip ${st.capTier === k ? 'tier-active' : ''}" data-cap="${k}">${k === 'k1' ? '$1k' : k === 'k10' ? '$10k' : '$50k'}</button>`).join('')}</div>
+        <div class="chip-group">${['all', 'FARM', 'WATCH', 'SKIP'].map((v) => `<button class="chip ${st.verdict === v ? 'active' : ''}" data-verdict="${v}">${v === 'all' ? 'All (' + DATA.rows.length + ')' : v + ' (' + vc[v] + ')'}</button>`).join('')}</div>
+        <div class="chip-group"><button class="chip ${st.tier === 'watchlist' ? 'active' : ''}" data-tier="watchlist">WL (${DATA.meta.watchlist_count})</button><button class="chip ${st.tier === 'early' ? 'active' : ''}" data-tier="early">Early (${DATA.meta.early_discovery_count})</button></div>
+        <select id="sectorSelect" class="select-input"><option value="all">All Sectors</option>${Object.entries(ENG.SECTOR_LABELS).slice(0, 4).map(([k, l]) => `<option value="${k}" ${st.sector === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <select id="chainSelect" class="select-input"><option value="all">All Chains</option>${DATA.meta.top_chains.map((c) => `<option value="${esc(c.chain)}" ${st.chain === c.chain ? 'selected' : ''}>${esc(c.chain)} (${c.count})</option>`).join('')}</select>
+        <button class="chip ${st.momentum === 'positive' ? 'active' : ''}" id="momToggle">7d&gt;0%</button><button class="reset-btn" id="resetFilters">Reset</button>
       </section>
       <section class="workspace-split">
         <div class="table-wrap"><div class="table-scroll"><table class="radar-table">
-          <thead><tr><th data-sort="rank">#${sa('rank')}</th><th data-sort="name">Protocol${sa('name')}</th><th data-sort="category">Sector${sa('category')}</th><th class="right" data-sort="tvl_usd">TVL${sa('tvl_usd')}</th><th class="right" data-sort="change_7d">7d Δ${sa('change_7d')}</th><th class="right" data-sort="months_live">Age${sa('months_live')}</th><th class="right" data-sort="launch_odds">Odds${sa('launch_odds')}</th><th class="right" data-sort="implied_value_usd">Expected EV${sa('implied_value_usd')}</th><th class="right" data-sort="hourly_ev">$/hr${sa('hourly_ev')}</th></tr></thead>
-          <tbody>${filtered.map((r) => `<tr data-slug="${esc(r.slug)}" class="${r.slug === selected.slug ? 'selected' : ''}"><td class="num">${r.rank}</td><td><div class="proto-name">${r.on_watchlist ? '<span class="wl-dot"></span>' : ''}${esc(r.name)}</div><div class="proto-meta">${esc(r.primary_chain)}${r.chains.length > 1 ? ` +${r.chains.length - 1}` : ''}</div></td><td><span class="pill">${esc(r.category)}</span></td><td class="right num">${fmtUsd(r.tvl_usd)}</td><td class="right num ${r.change_7d > 0 ? 'pos' : r.change_7d < 0 ? 'neg' : ''}">${fmtPct(r.change_7d)}</td><td class="right num">${r.months_live ? r.months_live + 'm' : 'n/a'}</td><td class="right num">${Math.round(r.launch_odds * 100)}%</td><td class="right num"><b>${fmtUsd(r.implied_value_usd)}</b></td><td class="right num"><span class="pill ${vCls(r.verdict)}">${r.verdict} ${r.hourly_ev >= 0 ? '+' : ''}$${r.hourly_ev}</span></td></tr>`).join('')}</tbody>
+          <thead><tr><th data-sort="rank">#${sa('rank')}</th><th data-sort="name">Protocol${sa('name')}</th><th data-sort="category">Sector${sa('category')}</th><th class="right" data-sort="tvl_usd">TVL${sa('tvl_usd')}</th><th class="right" data-sort="change_7d">7d Δ${sa('change_7d')}</th><th class="right" data-sort="months_live">Age${sa('months_live')}</th><th class="right" data-sort="launch_odds">Odds${sa('launch_odds')}</th><th class="right" data-sort="implied_value_usd">Expected EV${sa('implied_value_usd')}</th><th class="right" data-sort="hourly_ev">$/hr (${tLbl()})${sa('hourly_ev')}</th></tr></thead>
+          <tbody>${flt.map((r) => { const t = tOf(r); return `<tr data-slug="${esc(r.slug)}" class="${r.slug === sel.slug ? 'selected' : ''}">${td(r.rank, 'num')}${td(`<div class="proto-name">${r.on_watchlist ? '<span class="wl-dot"></span>' : ''}${esc(r.name)}</div><div class="proto-meta">${esc(r.primary_chain)}${r.chains.length > 1 ? ` +${r.chains.length - 1}` : ''}</div>`)}${td(pill('', esc(r.category)))}${rTd(usd(r.tvl_usd))}${rTd(pct(r.change_7d), dCls(r.change_7d))}${rTd(r.months_live ? r.months_live + 'm' : 'n/a')}${rTd(Math.round(r.launch_odds * 100) + '%')}${rTd(`<b>${usd(r.implied_value_usd)}</b>`)}${rTd(pill(vCls(t.verdict), `${t.verdict} ${t.hr >= 0 ? '+' : ''}$${t.hr}`))}</tr>`; }).join('')}</tbody>
         </table></div></div>
-        ${renderInspector(selected, false)}
+        ${renderInspector(sel, false)}
       </section>`;
     }
 
-    root.innerHTML = `${topBar}${bodyHtml}<footer class="disclaimer"><span>Live browser engine (dashboard/model.js) on ${esc(DATA.meta.as_of)} snapshot; ${esc(DATA.model.range_honesty)}</span><span class="num">Zero-network offline artifact</span></footer>`;
+    root.innerHTML = `${topBar}${body}<footer class="disclaimer"><span>Live browser engine (dashboard/model.js) on ${esc(DATA.meta.as_of)} snapshot · ${esc(DATA.model.range_honesty)}</span><span class="num">Zero-network offline artifact</span></footer>`;
 
-    root.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => { state.view = el.getAttribute('data-tab'); render(); }));
+    root.querySelectorAll('[data-tab]').forEach((el) => el.addEventListener('click', () => { st.view = el.getAttribute('data-tab'); render(); }));
+    root.querySelectorAll('[data-cap]').forEach((el) => el.addEventListener('click', () => { st.capTier = el.getAttribute('data-cap'); render(); }));
     const openFull = root.querySelector('#openFullDetailBtn');
-    if (openFull) openFull.addEventListener('click', () => { state.view = 'detail'; render(); });
+    if (openFull) openFull.addEventListener('click', () => { st.view = 'detail'; render(); });
     const detailSel = root.querySelector('#detailSelect');
-    if (detailSel) detailSel.addEventListener('change', (e) => { state.selectedSlug = e.target.value; render(); });
+    if (detailSel) detailSel.addEventListener('change', (e) => { st.selectedSlug = e.target.value; render(); });
     const searchEl = root.querySelector('#searchInput');
-    if (searchEl) searchEl.addEventListener('input', (e) => { state.search = e.target.value; render(); const a = root.querySelector('#searchInput'); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); } });
-    root.querySelectorAll('[data-verdict]').forEach((el) => el.addEventListener('click', () => { state.verdict = el.getAttribute('data-verdict'); render(); }));
-    root.querySelectorAll('[data-tier]').forEach((el) => el.addEventListener('click', () => { const t = el.getAttribute('data-tier'); state.tier = state.tier === t ? 'all' : t; render(); }));
+    if (searchEl) searchEl.addEventListener('input', (e) => { st.search = e.target.value; render(); const a = root.querySelector('#searchInput'); if (a) { a.focus(); a.setSelectionRange(a.value.length, a.value.length); } });
+    root.querySelectorAll('[data-verdict]').forEach((el) => el.addEventListener('click', () => { st.verdict = el.getAttribute('data-verdict'); render(); }));
+    root.querySelectorAll('[data-tier]').forEach((el) => el.addEventListener('click', () => { const t = el.getAttribute('data-tier'); st.tier = st.tier === t ? 'all' : t; render(); }));
     const secSel = root.querySelector('#sectorSelect');
-    if (secSel) secSel.addEventListener('change', (e) => { state.sector = e.target.value; render(); });
+    if (secSel) secSel.addEventListener('change', (e) => { st.sector = e.target.value; render(); });
     const chSel = root.querySelector('#chainSelect');
-    if (chSel) chSel.addEventListener('change', (e) => { state.chain = e.target.value; render(); });
+    if (chSel) chSel.addEventListener('change', (e) => { st.chain = e.target.value; render(); });
     const momBtn = root.querySelector('#momToggle');
-    if (momBtn) momBtn.addEventListener('click', () => { state.momentum = state.momentum === 'positive' ? 'all' : 'positive'; render(); });
+    if (momBtn) momBtn.addEventListener('click', () => { st.momentum = st.momentum === 'positive' ? 'all' : 'positive'; render(); });
     const rstBtn = root.querySelector('#resetFilters');
-    if (rstBtn) rstBtn.addEventListener('click', () => { state.search = ''; state.tier = 'all'; state.verdict = 'all'; state.sector = 'all'; state.chain = 'all'; state.momentum = 'all'; state.sortKey = 'rank'; state.sortDir = 'asc'; render(); });
-    root.querySelectorAll('th[data-sort]').forEach((th) => th.addEventListener('click', () => { const k = th.getAttribute('data-sort'); if (state.sortKey === k) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc'; else { state.sortKey = k; state.sortDir = ['rank', 'name', 'category'].includes(k) ? 'asc' : 'desc'; } render(); }));
-    root.querySelectorAll('tr[data-slug], .scatter-dot[data-slug]').forEach((el) => el.addEventListener('click', () => { state.selectedSlug = el.getAttribute('data-slug'); render(); }));
+    if (rstBtn) rstBtn.addEventListener('click', () => { st.search = ''; st.tier = 'all'; st.verdict = 'all'; st.sector = 'all'; st.chain = 'all'; st.momentum = 'all'; st.sortKey = 'rank'; st.sortDir = 'asc'; render(); });
+    root.querySelectorAll('th[data-sort]').forEach((th) => th.addEventListener('click', () => { const k = th.getAttribute('data-sort'); if (st.sortKey === k) st.sortDir = st.sortDir === 'asc' ? 'desc' : 'asc'; else { st.sortKey = k; st.sortDir = ['rank', 'name', 'category'].includes(k) ? 'asc' : 'desc'; } render(); }));
+    root.querySelectorAll('tr[data-slug], .scatter-dot[data-slug]').forEach((el) => el.addEventListener('click', () => { st.selectedSlug = el.getAttribute('data-slug'); render(); }));
   }
 
   render();
